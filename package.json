@@ -4,6 +4,7 @@
   "description": "Proxy parser API for BSU timetable with Headless Browser",
   "main": "server.js",
   "scripts": {
+    "postinstall": "npx puppeteer browsers install chrome",
     "start": "node server.js"
   },
   "dependencies": {
