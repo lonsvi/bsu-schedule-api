@@ -53,9 +53,22 @@ app.get('/api/schedule', async (req, res) => {
     }
 
     try {
+        const sessionUrl = 'https://bgu.ru/student/timetable.aspx';
+        const sessionRes = await axios.get(sessionUrl, {
+            headers: BSU_HEADERS,
+            timeout: 15000
+        });
+
+        const rawCookies = sessionRes.headers['set-cookie'] || [];
+        const cookieHeader = rawCookies.map(c => c.split(';')[0]).join('; ');
+
         const url = `https://bgu.ru/student/timetable.aspx?idg=${encodeURIComponent(idg)}`;
         const response = await axios.get(url, {
-            headers: BSU_HEADERS,
+            headers: {
+                ...BSU_HEADERS,
+                'Cookie': cookieHeader || '',
+                'Referer': sessionUrl
+            },
             timeout: 15000
         });
 
