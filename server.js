@@ -1,7 +1,8 @@
 const express = require('express');
 const cheerio = require('cheerio');
 const cors = require('cors');
-const puppeteer = require('puppeteer');
+const chromium = require('@sparticuz/chromium');
+const puppeteer = require('puppeteer-core');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -29,10 +30,14 @@ let browserInstance = null;
 
 async function getBrowser() {
     if (!browserInstance || !browserInstance.connected) {
-        console.log('[Browser] Launching stealth Headless Chrome instance...');
+        console.log('[Browser] Launching cloud-optimized Chromium instance...');
+        
+        const executablePath = await chromium.executablePath();
+        console.log('[Browser] Chromium executable path:', executablePath);
+
         browserInstance = await puppeteer.launch({
-            headless: true,
             args: [
+                ...chromium.args,
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
@@ -43,7 +48,10 @@ async function getBrowser() {
                 '--disable-blink-features=AutomationControlled',
                 '--window-size=1366,768',
                 '--lang=ru-RU,ru'
-            ]
+            ],
+            defaultViewport: chromium.defaultViewport,
+            executablePath: executablePath,
+            headless: chromium.headless
         });
     }
     return browserInstance;
@@ -53,7 +61,7 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: 'online',
-        service: 'BSU Schedule Stealth Browser API',
+        service: 'BSU Schedule Cloud Browser API',
         location_spoof: 'Irkutsk, Russia (GMT+8)',
         endpoints: {
             schedule: '/api/schedule?idg=33344',
@@ -113,7 +121,6 @@ app.get('/api/schedule', async (req, res) => {
             timeout: 25000
         });
 
-        // Small human-like delay
         await new Promise(r => setTimeout(r, 600));
 
         // Step 2: Try clicking the group link if visible, else navigate directly
@@ -244,7 +251,7 @@ app.get('/api/schedule', async (req, res) => {
         }
         console.error('[Browser] Scrape error:', err.message);
         res.status(502).json({
-            error: 'Failed to scrape timetable with stealth browser',
+            error: 'Failed to scrape timetable with cloud browser',
             message: err.message
         });
     }
@@ -300,5 +307,5 @@ app.get('/api/groups', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`BSU Schedule Stealth API running on port ${PORT}`);
+    console.log(`BSU Schedule Cloud Browser API running on port ${PORT}`);
 });
