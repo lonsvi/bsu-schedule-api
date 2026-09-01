@@ -22,11 +22,14 @@ const DAY_MAP = {
     'СУББОТА': 6
 };
 
+// Russian residential IP (Rostelecom Irkutsk) for header spoofing
+const IRKUTSK_IP = '95.167.142.68';
+
 let browserInstance = null;
 
 async function getBrowser() {
     if (!browserInstance || !browserInstance.connected) {
-        console.log('Launching new headless browser instance...');
+        console.log('[Browser] Launching stealth Headless Chrome instance...');
         browserInstance = await puppeteer.launch({
             headless: true,
             args: [
@@ -37,7 +40,9 @@ async function getBrowser() {
                 '--no-first-run',
                 '--no-zygote',
                 '--single-process',
-                '--disable-extensions'
+                '--disable-blink-features=AutomationControlled',
+                '--window-size=1366,768',
+                '--lang=ru-RU,ru'
             ]
         });
     }
@@ -48,7 +53,8 @@ async function getBrowser() {
 app.get('/', (req, res) => {
     res.json({
         status: 'online',
-        service: 'BSU Schedule Headless Browser API',
+        service: 'BSU Schedule Stealth Browser API',
+        location_spoof: 'Irkutsk, Russia (GMT+8)',
         endpoints: {
             schedule: '/api/schedule?idg=33344',
             groups: '/api/groups'
@@ -56,7 +62,7 @@ app.get('/', (req, res) => {
     });
 });
 
-// GET Schedule for group idg via Headless Browser
+// GET Schedule for group idg with full stealth & Russian geo emulation
 app.get('/api/schedule', async (req, res) => {
     const idg = req.query.idg || '33344';
     const cacheKey = `schedule_${idg}`;
@@ -70,29 +76,69 @@ app.get('/api/schedule', async (req, res) => {
     try {
         const browser = await getBrowser();
         page = await browser.newPage();
-        
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36');
-        await page.setViewport({ width: 1280, height: 800 });
 
-        console.log(`[Browser] Navigating to BSU timetable for group idg=${idg}...`);
-        
-        // Step 1: Open main timetable page
+        // 1. Emulate Russian Timezone & Geolocation (Irkutsk, BSU)
+        await page.emulateTimezone('Asia/Irkutsk');
+        await page.setGeolocation({ latitude: 52.2833, longitude: 104.2833 });
+
+        // 2. Set Realistic Viewport and User-Agent
+        await page.setViewport({ width: 1366, height: 768 });
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36');
+
+        // 3. Inject Spoofed Russian Residential Headers
+        await page.setExtraHTTPHeaders({
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'X-Forwarded-For': IRKUTSK_IP,
+            'X-Real-IP': IRKUTSK_IP,
+            'Client-IP': IRKUTSK_IP,
+            'sec-ch-ua': '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"'
+        });
+
+        // 4. Anti-detection script (remove webdriver, spoof languages & plugins)
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            Object.defineProperty(navigator, 'languages', { get: () => ['ru-RU', 'ru', 'en-US', 'en'] });
+            Object.defineProperty(navigator, 'language', { get: () => 'ru-RU' });
+            window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        });
+
+        console.log(`[Browser] Loading timetable for group idg=${idg}...`);
+
+        // Step 1: Open main page to establish ASP.NET session
         await page.goto('https://bgu.ru/student/timetable.aspx', {
             waitUntil: 'domcontentloaded',
             timeout: 25000
         });
 
-        // Step 2: Navigate to target group
-        await page.goto(`https://bgu.ru/student/timetable.aspx?idg=${encodeURIComponent(idg)}`, {
-            waitUntil: 'networkidle2',
-            timeout: 30000
-        });
+        // Small human-like delay
+        await new Promise(r => setTimeout(r, 600));
 
-        // Step 3: Wait for timetable table or container
+        // Step 2: Try clicking the group link if visible, else navigate directly
+        const targetHref = `idg=${idg}`;
+        const link = await page.$(`a[href*="${targetHref}"]`);
+        
+        if (link) {
+            console.log(`[Browser] Found link for group ${idg}, clicking...`);
+            await Promise.all([
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {}),
+                link.click()
+            ]);
+        } else {
+            console.log(`[Browser] Navigating directly to group url idg=${idg}...`);
+            await page.goto(`https://bgu.ru/student/timetable.aspx?idg=${encodeURIComponent(idg)}`, {
+                waitUntil: 'networkidle2',
+                timeout: 30000
+            });
+        }
+
+        // Step 3: Wait for table to render
         try {
-            await page.waitForSelector('#MainContent_divTT table tr, table.table-bordered tr', { timeout: 8000 });
+            await page.waitForSelector('#MainContent_divTT table tr, table tr', { timeout: 7000 });
         } catch (e) {
-            console.log('[Browser] Table selector wait timed out, proceeding to dump current HTML...');
+            console.log('[Browser] Table wait timed out, reading available DOM...');
         }
 
         const html = await page.content();
@@ -198,7 +244,7 @@ app.get('/api/schedule', async (req, res) => {
         }
         console.error('[Browser] Scrape error:', err.message);
         res.status(502).json({
-            error: 'Failed to scrape BSU timetable with Headless Browser',
+            error: 'Failed to scrape timetable with stealth browser',
             message: err.message
         });
     }
@@ -216,6 +262,7 @@ app.get('/api/groups', async (req, res) => {
     try {
         const browser = await getBrowser();
         page = await browser.newPage();
+        await page.emulateTimezone('Asia/Irkutsk');
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36');
         
         await page.goto('https://bgu.ru/student/timetable.aspx', {
@@ -253,5 +300,5 @@ app.get('/api/groups', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`BSU Schedule Headless Browser API running on port ${PORT}`);
+    console.log(`BSU Schedule Stealth API running on port ${PORT}`);
 });
