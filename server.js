@@ -26,35 +26,46 @@ const DAY_MAP = {
 // Russian residential IP (Rostelecom Irkutsk) for header spoofing
 const IRKUTSK_IP = '95.167.142.68';
 
-let browserInstance = null;
+let browserPromise = null;
 
 async function getBrowser() {
-    if (!browserInstance || !browserInstance.connected) {
-        console.log('[Browser] Launching cloud-optimized Chromium instance...');
-        
-        const executablePath = await chromium.executablePath();
-        console.log('[Browser] Chromium executable path:', executablePath);
+    if (!browserPromise) {
+        browserPromise = (async () => {
+            console.log('[Browser] Launching cloud-optimized Chromium instance...');
+            const executablePath = await chromium.executablePath();
+            console.log('[Browser] Chromium executable path:', executablePath);
 
-        browserInstance = await puppeteer.launch({
-            args: [
-                ...chromium.args,
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--no-first-run',
-                '--no-zygote',
-                '--single-process',
-                '--disable-blink-features=AutomationControlled',
-                '--window-size=1366,768',
-                '--lang=ru-RU,ru'
-            ],
-            defaultViewport: chromium.defaultViewport,
-            executablePath: executablePath,
-            headless: chromium.headless
+            const browser = await puppeteer.launch({
+                args: [
+                    ...chromium.args,
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--no-first-run',
+                    '--no-zygote',
+                    '--single-process',
+                    '--disable-blink-features=AutomationControlled',
+                    '--window-size=1366,768',
+                    '--lang=ru-RU,ru'
+                ],
+                defaultViewport: chromium.defaultViewport,
+                executablePath: executablePath,
+                headless: chromium.headless
+            });
+
+            browser.on('disconnected', () => {
+                console.log('[Browser] Browser disconnected, clearing reference.');
+                browserPromise = null;
+            });
+
+            return browser;
+        })().catch(err => {
+            browserPromise = null;
+            throw err;
         });
     }
-    return browserInstance;
+    return browserPromise;
 }
 
 // Health check
@@ -113,37 +124,18 @@ app.get('/api/schedule', async (req, res) => {
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         });
 
-        console.log(`[Browser] Loading timetable for group idg=${idg}...`);
+        const targetUrl = `https://bgu.ru/student/timetable.aspx?idg=${encodeURIComponent(idg)}`;
+        console.log(`[Browser] Loading timetable directly from ${targetUrl}...`);
 
-        // Step 1: Open main page to establish ASP.NET session
-        await page.goto('https://bgu.ru/student/timetable.aspx', {
-            waitUntil: 'domcontentloaded',
-            timeout: 25000
+        // Navigate to target group page
+        await page.goto(targetUrl, {
+            waitUntil: 'networkidle2',
+            timeout: 35000
         });
 
-        await new Promise(r => setTimeout(r, 600));
-
-        // Step 2: Try clicking the group link if visible, else navigate directly
-        const targetHref = `idg=${idg}`;
-        const link = await page.$(`a[href*="${targetHref}"]`);
-        
-        if (link) {
-            console.log(`[Browser] Found link for group ${idg}, clicking...`);
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 25000 }).catch(() => {}),
-                link.click()
-            ]);
-        } else {
-            console.log(`[Browser] Navigating directly to group url idg=${idg}...`);
-            await page.goto(`https://bgu.ru/student/timetable.aspx?idg=${encodeURIComponent(idg)}`, {
-                waitUntil: 'networkidle2',
-                timeout: 30000
-            });
-        }
-
-        // Step 3: Wait for table to render
+        // Wait for table to render or container
         try {
-            await page.waitForSelector('#MainContent_divTT table tr, table tr', { timeout: 7000 });
+            await page.waitForSelector('#MainContent_divTT table tr, table tr', { timeout: 8000 });
         } catch (e) {
             console.log('[Browser] Table wait timed out, reading available DOM...');
         }
