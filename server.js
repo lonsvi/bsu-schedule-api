@@ -23,7 +23,6 @@ const DAY_MAP = {
     'СУББОТА': 6
 };
 
-// Russian residential IP (Rostelecom Irkutsk) for header spoofing
 const IRKUTSK_IP = '95.167.142.68';
 
 let browserPromise = null;
@@ -31,9 +30,8 @@ let browserPromise = null;
 async function getBrowser() {
     if (!browserPromise) {
         browserPromise = (async () => {
-            console.log('[Browser] Launching cloud-optimized Chromium instance...');
+            console.log('[Browser] Launching Chromium instance...');
             const executablePath = await chromium.executablePath();
-            console.log('[Browser] Chromium executable path:', executablePath);
 
             const browser = await puppeteer.launch({
                 args: [
@@ -49,7 +47,7 @@ async function getBrowser() {
                     '--window-size=1366,768',
                     '--lang=ru-RU,ru'
                 ],
-                defaultViewport: chromium.defaultViewport,
+                defaultViewport: { width: 1366, height: 768 },
                 executablePath: executablePath,
                 headless: chromium.headless
             });
@@ -124,27 +122,43 @@ app.get('/api/schedule', async (req, res) => {
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         });
 
-        const targetUrl = `https://bgu.ru/student/timetable.aspx?idg=${encodeURIComponent(idg)}`;
-        console.log(`[Browser] Loading timetable directly from ${targetUrl}...`);
-
-        // Navigate to target group page
-        await page.goto(targetUrl, {
+        console.log(`[Browser] Loading main timetable page...`);
+        await page.goto('https://bgu.ru/student/timetable.aspx', {
             waitUntil: 'networkidle2',
-            timeout: 35000
+            timeout: 30000
         });
 
-        // Wait for table to render or container
-        try {
-            await page.waitForSelector('#MainContent_divTT table tr, table tr', { timeout: 8000 });
-        } catch (e) {
-            console.log('[Browser] Table wait timed out, reading available DOM...');
-        }
+        console.log(`[Browser] Selecting group idg=${idg}...`);
+        
+        // Execute JS click on group link or trigger ASP.NET navigation
+        const clicked = await page.evaluate((targetIdg) => {
+            const link = document.querySelector(`a[href*="idg=${targetIdg}"]`);
+            if (link) {
+                link.click();
+                return true;
+            }
+            window.location.href = `https://bgu.ru/student/timetable.aspx?idg=${targetIdg}`;
+            return false;
+        }, idg);
+
+        console.log(`[Browser] Group click executed: ${clicked}, waiting for table render...`);
+
+        // Wait up to 10 seconds for table or divTT change
+        await page.waitForFunction(() => {
+            const div = document.getElementById('MainContent_divTT');
+            if (!div) return false;
+            const text = div.innerText || '';
+            const tables = div.querySelectorAll('table tr');
+            return tables.length > 2 || text.includes('недоступно') || text.includes('семестр');
+        }, { timeout: 12000 }).catch(() => {});
 
         const html = await page.content();
         await page.close();
         page = null;
 
         const $ = cheerio.load(html);
+        const divText = $('#MainContent_divTT').text().trim().replace(/\s+/g, ' ');
+        console.log(`[Browser] divTT summary: ${divText.substring(0, 200)}`);
 
         const groupName = $('#MainContent_divTT h1, #MainContent_divTT h2, .container h1').first().text().trim() || `Группа ${idg}`;
         
@@ -232,7 +246,10 @@ app.get('/api/schedule', async (req, res) => {
         };
 
         if (lessons.length > 0) {
+            console.log(`[Browser] Scraped successfully: ${lessons.length} lessons found!`);
             cache.set(cacheKey, { timestamp: Date.now(), data: resultData });
+        } else {
+            console.log(`[Browser] Warning: 0 lessons extracted from page.`);
         }
 
         res.json(resultData);
