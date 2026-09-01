@@ -1,16 +1,16 @@
 {
   "name": "bsu-schedule-proxy",
   "version": "1.0.0",
-  "description": "Proxy parser API for BSU timetable",
+  "description": "Proxy parser API for BSU timetable with Headless Browser",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "axios": "^1.7.9",
     "cheerio": "^1.0.0",
     "cors": "^2.8.5",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "puppeteer": "^23.11.1"
   },
   "engines": {
     "node": ">=18.0.0"
